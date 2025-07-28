@@ -1,20 +1,59 @@
 #include <chrono>
 #include <coroutine>
-#include <future>
+#include <functional>
 #include <iostream>
 #include <memory>
+#include <mutex>
+#include <queue>
 #include <thread>
 
 using namespace std::chrono_literals;
 
+struct Task {
+  std::chrono::time_point<std::chrono::system_clock> mTimeout;
+  std::function<void(void)> mCallback;
+};
+
+bool operator<(const Task &lhs, const Task &rhs) {
+  // 0 priority is higher that say 100
+  return lhs.mTimeout > rhs.mTimeout;
+}
+
 struct EventLoop : std::enable_shared_from_this<EventLoop> {
   void onTimeout(std::chrono::system_clock::duration duration,
                  std::function<void(void)> callback) {
-    std::async(std::launch::async, [duration]() {
-      std::this_thread::sleep_for(duration);
-    }).wait();
-    callback();
+    auto self = weak_from_this().lock();
+    auto until = std::chrono::system_clock::now() + duration;
+    Task task{
+        .mTimeout = until,
+        .mCallback = std::move(callback),
+    };
+    std::lock_guard lg(self->mMutex);
+    self->mTasks.push(std::move(task));
   }
+
+  void run() {
+    auto self = weak_from_this().lock();
+    while (true) {
+      // FIXME: use OS capabilities directly to avoid stalling
+      std::this_thread::sleep_for(100ms);
+      const auto currentTime = std::chrono::system_clock::now();
+      std::lock_guard lg(mMutex);
+      if (self->mTasks.empty()) {
+        return;
+      }
+      const auto &top = self->mTasks.top();
+      if (top.mTimeout <= currentTime) {
+        top.mCallback();
+        self->mTasks.pop();
+      }
+    }
+  }
+
+  std::mutex mMutex;
+  std::priority_queue<Task> mTasks;
+
+  ~EventLoop() { std::cerr << "EventLoop was destroyed...\n"; }
 };
 
 struct TimerPromise;
@@ -39,7 +78,7 @@ struct TimerPromise {
 struct AvaitableTimer {
   explicit AvaitableTimer(std::shared_ptr<EventLoop> eventLoop,
                           std::chrono::system_clock::duration duration)
-      : mDuration(duration) {}
+      : mEventLoop(std::move(eventLoop)), mDuration(duration) {}
   // а нужно ли нам вообще засыпать, может все уже и так готово и мы можем
   // продолжить сразу?
   bool await_ready() const noexcept { return mDuration.count() <= 0; }
@@ -72,21 +111,17 @@ TimerTask tick2(std::shared_ptr<EventLoop> eventLoop) {
   std::cout << "2s\n";
 }
 
-TimerTask tick3(std::shared_ptr<EventLoop> eventLoop) {
+TimerTask task10(std::shared_ptr<EventLoop> eventLoop) {
   using namespace std::chrono_literals;
-  co_await AvaitableTimer(eventLoop, 2s);
-  std::cout << "3s\n";
+  co_await AvaitableTimer(eventLoop, 10s);
+  std::cout << "10s\n";
 }
 
-// TODO: https://habr.com/ru/articles/798935/
 int main() {
   auto eventLoop = std::make_shared<EventLoop>();
-  // tick(eventLoop);
-  std::thread t1([eventLoop]() {
-    tick3(eventLoop);
-    tick2(eventLoop);
-    tick1(eventLoop);
-  });
+  task10(eventLoop);
+  tick2(eventLoop);
+  tick1(eventLoop);
   std::cout << "hmm.\n";
-  t1.join();
+  eventLoop->run();
 }
