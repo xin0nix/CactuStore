@@ -7,176 +7,12 @@
 #include <functional>
 #include <iostream>
 #include <memory>
-#include <mutex>
-#include <queue>
-#include <thread>
+
+#include "EventLoop.hpp"
 
 using namespace std::chrono_literals;
 
-using SigVal = union ::sigval;
-using SigEvent = struct ::sigevent;
-using ITimerSpec = struct ::itimerspec;
-
-struct EventLoop;
-
-struct Task {
-  void onNotification();
-
-  std::function<void(void)> mCallback;
-  std::weak_ptr<EventLoop> mEventLoop;
-  size_t mIndex;
-};
-
-struct EventLoop : std::enable_shared_from_this<EventLoop> {
-  void handleTask(size_t index);
-
-  void onTimeout(std::chrono::nanoseconds duration,
-                 std::function<void(void)> callback);
-
-  void run();
-
-  std::atomic<size_t> mTaskCount{0};
-  std::mutex mMutex;
-  std::unordered_map<size_t, Task> mPendingTasks;
-  std::queue<Task> mReadyTasks;
-
-  ~EventLoop();
-};
-
-struct TimerSingleton {
-  TimerSingleton() = default;
-  static void setEvent(int timer, std::weak_ptr<EventLoop> loop) {
-    std::lock_guard lg(mMutex);
-    get().mListeners[timer] = std::move(loop);
-  }
-
-  static void fire(int timer) {
-    std::lock_guard lg(mMutex);
-    auto loop = get().mListeners[timer].lock();
-    if (!loop) {
-      return;
-    }
-    loop->handleTask(timer);
-  }
-
-  static void releaseEvent(int timer) {
-    std::lock_guard lg(mMutex);
-    get().mListeners.erase(timer);
-  }
-
-  static TimerSingleton &get() {
-    if (!mEntity) {
-      mEntity = std::make_unique<TimerSingleton>();
-    }
-    return *mEntity;
-  }
-
-  static std::unique_ptr<TimerSingleton> mEntity;
-  static std::mutex mMutex;
-  std::unordered_map<int, std::weak_ptr<EventLoop>> mListeners;
-};
-
-std::unique_ptr<TimerSingleton> TimerSingleton::mEntity;
-std::mutex TimerSingleton::mMutex;
-
-void signal_handler(int sig, siginfo_t *si, void *uc) {
-  int index = si->si_value.sival_int;
-  TimerSingleton::fire(index);
-}
-
-void EventLoop::handleTask(size_t index) {
-  auto weak = weak_from_this();
-  auto self = weak.lock();
-  if (!self) {
-    return;
-  }
-  std::lock_guard guard(self->mMutex);
-  auto task = self->mPendingTasks.at(index);
-  self->mReadyTasks.push(std::move(task));
-  // self->mPendingTasks.erase(index);
-}
-
-void EventLoop::onTimeout(std::chrono::nanoseconds duration,
-                          std::function<void(void)> callback) {
-  auto weak = weak_from_this();
-  auto self = weak.lock();
-  if (!self) {
-    return;
-  }
-  std::lock_guard guard(self->mMutex);
-  self->mPendingTasks[mTaskCount] = Task{
-      .mCallback = std::move(callback),
-      .mEventLoop = weak_from_this(),
-      .mIndex = mTaskCount,
-  };
-
-  struct sigaction sa;
-  sa.sa_flags = SA_SIGINFO;
-  sa.sa_sigaction = signal_handler;
-  sigemptyset(&sa.sa_mask);
-  if (sigaction(SIGRTMIN, &sa, NULL) == -1) {
-    perror("sigaction");
-    exit(EXIT_FAILURE);
-  }
-
-  struct sigevent sev;
-  sev.sigev_notify = SIGEV_SIGNAL;
-  sev.sigev_signo = SIGRTMIN;
-  sev.sigev_value.sival_int = mTaskCount;
-  timer_t timerid;
-  if (timer_create(CLOCK_REALTIME, &sev, &timerid) == -1) {
-    perror("timer_create");
-    exit(EXIT_FAILURE);
-  }
-
-  struct itimerspec its;
-  its.it_value.tv_sec = duration.count() / 1000'000'000;
-  its.it_value.tv_nsec = duration.count() % 1000'000'000;
-  its.it_interval.tv_sec = 0;
-  its.it_interval.tv_nsec = 0;
-
-  TimerSingleton::setEvent(mTaskCount, weak_from_this());
-  if (timer_settime(timerid, 0, &its, NULL) == -1) {
-    perror("timer_settime");
-    exit(EXIT_FAILURE);
-  }
-  mTaskCount += 1;
-}
-
-void EventLoop::run() {
-  auto weak = weak_from_this();
-  auto self = weak.lock();
-  if (!self) {
-    return;
-  }
-  while (true) {
-    // FIXME: wait on CV capabilities directly to avoid stalling
-    std::this_thread::sleep_for(100ms);
-    const auto currentTime = std::chrono::system_clock::now();
-    std::lock_guard guard(self->mMutex);
-    if (self->mReadyTasks.empty()) {
-      if (self->mPendingTasks.empty()) {
-        return;
-      }
-      continue;
-    }
-    const auto &top = self->mReadyTasks.front();
-    top.mCallback();
-    self->mPendingTasks.erase(top.mIndex);
-    TimerSingleton::releaseEvent(top.mIndex);
-    self->mReadyTasks.pop();
-  }
-}
-
-EventLoop::~EventLoop() { std::cerr << "EventLoop was destroyed...\n"; }
-
-void Task::onNotification() {
-  auto loop = mEventLoop.lock();
-  if (!loop) {
-    return;
-  }
-  loop->handleTask(mIndex);
-}
+namespace cactus {
 
 struct TimerPromise;
 
@@ -219,30 +55,38 @@ private:
   std::chrono::system_clock::duration mDuration;
   std::shared_ptr<EventLoop> mEventLoop;
 };
+} // namespace cactus
 
 // сопрограмма, которая через каждую секунду будет выводить текст на экран
-TimerTask tick1(std::shared_ptr<EventLoop> eventLoop) {
+cactus::TimerTask tick1(std::shared_ptr<cactus::EventLoop> eventLoop) {
   using namespace std::chrono_literals;
-  co_await AvaitableTimer(eventLoop, 1s);
+  co_await cactus::AvaitableTimer(eventLoop, 1s);
   std::cout << "1s\n";
 }
 
-TimerTask tick2(std::shared_ptr<EventLoop> eventLoop) {
+cactus::TimerTask tick2(std::shared_ptr<cactus::EventLoop> eventLoop) {
   using namespace std::chrono_literals;
-  co_await AvaitableTimer(eventLoop, 2s);
+  co_await cactus::AvaitableTimer(eventLoop, 2s);
   std::cout << "2s\n";
 }
 
-TimerTask task10(std::shared_ptr<EventLoop> eventLoop) {
+cactus::TimerTask task5(std::shared_ptr<cactus::EventLoop> eventLoop) {
   using namespace std::chrono_literals;
-  co_await AvaitableTimer(eventLoop, 5s);
+  co_await cactus::AvaitableTimer(eventLoop, 5s);
   std::cout << "5s\n";
 }
 
+cactus::TimerTask task6(std::shared_ptr<cactus::EventLoop> eventLoop) {
+  using namespace std::chrono_literals;
+  co_await cactus::AvaitableTimer(eventLoop, 6s);
+  std::cout << "6s\n";
+}
+
 int main() {
-  auto eventLoop = std::make_shared<EventLoop>();
-  task10(eventLoop);
+  auto eventLoop = std::make_shared<cactus::EventLoop>();
+  task5(eventLoop);
   tick2(eventLoop);
+  task6(eventLoop);
   tick1(eventLoop);
   std::cout << "hmm.\n";
   eventLoop->run();

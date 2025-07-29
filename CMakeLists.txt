@@ -1,12 +1,16 @@
-cmake_minimum_required(VERSION 3.20)  # Minimum CMake version supporting C++23 standard setting
+cmake_minimum_required(VERSION 3.20) 
 
 project(CactuStore LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 23)             # Set the C++ standard to C++23
-set(CMAKE_CXX_STANDARD_REQUIRED ON)   # Require the standard (error if not supported)
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-add_executable(CactuStore main.cpp)    # Create executable from main.cpp
+add_executable(CactuStore
+    Coro.cpp
+    EventLoop.cpp
+    Timer.cpp
+    main.cpp
+) 
 
-# Add Address Sanitizer flags for both compile and link
 target_compile_options(CactuStore PRIVATE -fsanitize=thread)
 target_link_options(CactuStore PRIVATE -fsanitize=thread)
