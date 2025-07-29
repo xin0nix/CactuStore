@@ -27,8 +27,8 @@ struct Task {
   size_t mIndex;
 };
 
-void notificationCallback(union sigval sv) {
-  Task *task = static_cast<Task *>(sv.sival_ptr);
+void signal_handler(int sig, siginfo_t *si, void *uc) {
+  Task *task = static_cast<Task *>(si->si_value.sival_ptr);
   if (!task) {
     return;
   }
@@ -62,22 +62,33 @@ struct EventLoop : std::enable_shared_from_this<EventLoop> {
         .mEventLoop = weak_from_this(),
         .mIndex = mTaskCount,
     };
-    SigEvent sigEvent;
-    sigEvent.sigev_notify = ::SIGEV_THREAD;
-    sigEvent.sigev_value.sival_ptr = &self->mPendingTasks.at(mTaskCount);
-    sigEvent.sigev_notify_function = notificationCallback;
-    sigEvent.sigev_notify_attributes = NULL;
-    timer_t timerId;
-    if (timer_create(CLOCK_REALTIME, &sigEvent, &timerId) == -1) {
+
+    struct sigaction sa;
+    sa.sa_flags = SA_SIGINFO;
+    sa.sa_sigaction = signal_handler;
+    sigemptyset(&sa.sa_mask);
+    if (sigaction(SIGRTMIN, &sa, NULL) == -1) {
+      perror("sigaction");
+      exit(EXIT_FAILURE);
+    }
+
+    struct sigevent sev;
+    sev.sigev_notify = SIGEV_SIGNAL;
+    sev.sigev_signo = SIGRTMIN;
+    sev.sigev_value.sival_ptr = &self->mPendingTasks.at(mTaskCount);
+    timer_t timerid;
+    if (timer_create(CLOCK_REALTIME, &sev, &timerid) == -1) {
       perror("timer_create");
       exit(EXIT_FAILURE);
     }
-    ITimerSpec iTimerSpec;
-    iTimerSpec.it_value.tv_sec = duration.count() / 1000'000'000;
-    iTimerSpec.it_value.tv_nsec = duration.count() % 1000'000'000;
-    iTimerSpec.it_interval.tv_sec = 0;
-    iTimerSpec.it_interval.tv_nsec = 0;
-    if (timer_settime(timerId, 0, &iTimerSpec, NULL) == -1) {
+
+    struct itimerspec its;
+    its.it_value.tv_sec = duration.count() / 1000'000'000;
+    its.it_value.tv_nsec = duration.count() % 1000'000'000;
+    its.it_interval.tv_sec = 0;
+    its.it_interval.tv_nsec = 0;
+
+    if (timer_settime(timerid, 0, &its, NULL) == -1) {
       perror("timer_settime");
       exit(EXIT_FAILURE);
     }
