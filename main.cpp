@@ -9,6 +9,8 @@
 #include <memory>
 
 #include "EventLoop.hpp"
+#include "IpAddress.hpp"
+#include "TcpSocket.hpp"
 
 using namespace std::chrono_literals;
 
@@ -83,6 +85,9 @@ cactus::TimerTask task6(std::shared_ptr<cactus::EventLoop> eventLoop) {
 }
 
 int main() {
+  cactus::IpAddress ipAddress({127, 0, 0, 1}, 8080);
+  cactus::TcpSocket tcpSocket;
+  tcpSocket.bindTo(ipAddress);
   auto eventLoop = std::make_shared<cactus::EventLoop>();
   task5(eventLoop);
   tick2(eventLoop);

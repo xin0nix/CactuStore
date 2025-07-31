@@ -8,6 +8,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_executable(CactuStore
     Coro.cpp
     EventLoop.cpp
+    IpAddress.cpp
+    TcpSocket.cpp
     Timer.cpp
     main.cpp
 ) 
