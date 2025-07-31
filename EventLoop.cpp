@@ -1,4 +1,5 @@
 #include "EventLoop.hpp"
+#include "TcpSocket.hpp"
 #include "Timer.hpp"
 
 #include <csignal>
@@ -39,6 +40,7 @@ void EventLoop::onTimeout(std::chrono::nanoseconds duration,
       .mIndex = mTaskCount,
   };
 
+  // TODO: move to the timer!!!
   struct sigaction sa;
   sa.sa_flags = SA_SIGINFO;
   sa.sa_sigaction = signal_handler;
@@ -70,6 +72,13 @@ void EventLoop::onTimeout(std::chrono::nanoseconds duration,
     exit(EXIT_FAILURE);
   }
   mTaskCount += 1;
+}
+
+void EventLoop::onTcpSocketRead(std::shared_ptr<TcpSocket> socket,
+                                std::span<uint8_t> buffer,
+                                std::function<void(size_t)> callback) {
+  // TODO: go through the event loop!
+  socket->read(buffer, std::move(callback));
 }
 
 void EventLoop::run() {

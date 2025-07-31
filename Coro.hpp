@@ -1,5 +1,6 @@
 #pragma once
 
+#include "TcpSocket.hpp"
 #include <chrono>
 #include <coroutine>
 #include <memory>
@@ -8,16 +9,17 @@ using namespace std::chrono_literals;
 
 namespace cactus {
 
-struct TimerPromise;
+struct CoroPromise;
 struct EventLoop;
+struct TcpSocket;
 
-struct TimerTask : std::coroutine_handle<TimerPromise> {
-  using promise_type = TimerPromise;
+struct CoroTask : std::coroutine_handle<CoroPromise> {
+  using promise_type = CoroPromise;
 };
 
-struct TimerPromise {
+struct CoroPromise {
   // То что будет возвращено вызывающей стороне
-  TimerTask get_return_object();
+  CoroTask get_return_object();
   // Доходим до первого co_await
   std::suspend_never initial_suspend() noexcept;
   // Сразу выходим
@@ -37,7 +39,7 @@ struct AvaitableTimer {
 
   // здесь мы можем запустить какой-то процесс, по завершению которого нами
   // будет вызван handle.resume()
-  void await_suspend(std::coroutine_handle<TimerPromise> handle) noexcept;
+  void await_suspend(std::coroutine_handle<CoroPromise> handle) noexcept;
 
   // здесь мы вернем вызывающей стороне результат операции, ну или void если не
   // хотим ничего возвращать
@@ -47,4 +49,27 @@ private:
   std::chrono::system_clock::duration mDuration;
   std::shared_ptr<EventLoop> mEventLoop;
 };
+
+struct AvaitableTcpSocketReader {
+  explicit AvaitableTcpSocketReader(std::shared_ptr<EventLoop> eventLoop,
+                                    std::shared_ptr<TcpSocket> socket,
+                                    std::span<uint8_t> buffer);
+  // а нужно ли нам вообще засыпать, может все уже и так готово и мы можем
+  // продолжить сразу?
+  bool await_ready() const noexcept;
+
+  // здесь мы можем запустить какой-то процесс, по завершению которого нами
+  // будет вызван handle.resume()
+  void await_suspend(std::coroutine_handle<CoroPromise> handle) noexcept;
+
+  // здесь мы вернем вызывающей стороне результат операции
+  size_t await_resume() const noexcept;
+
+private:
+  std::span<uint8_t> mBuffer;
+  std::shared_ptr<TcpSocket> mTcpSocket;
+  std::shared_ptr<EventLoop> mEventLoop;
+  size_t mBytesRead{0};
+};
+
 } // namespace cactus

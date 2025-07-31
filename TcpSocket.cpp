@@ -44,4 +44,17 @@ void TcpSocket::bindTo(const IpAddress &ipAddress) {
     throw Exception(errno);
   }
 }
+
+void TcpSocket::read(std::span<uint8_t> buffer,
+                     std::function<void(size_t)> callback) {
+  // TODO:
+  callback(42);
+}
+
+void TcpSocket::write(std::span<uint8_t> buffer,
+                      std::function<void(size_t)> callback) {
+  // TODO:
+  callback(42);
+}
+
 } // namespace cactus
