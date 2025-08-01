@@ -1,5 +1,4 @@
 #include "Timer.hpp"
-#include "EventLoop.hpp"
 
 #include <csignal>
 #include <cstdio>
@@ -14,7 +13,7 @@ void signal_handler(int sig, siginfo_t *si, void *uc) {
 namespace cactus {
 
 void TimerSingleton::setEvent(int eventIndex, std::chrono::nanoseconds duration,
-                              std::weak_ptr<EventLoop> loop) {
+                              std::function<void(size_t)> handler) {
   // TODO: move to the timer!!!
   struct sigaction sa;
   sa.sa_flags = SA_SIGINFO;
@@ -41,26 +40,23 @@ void TimerSingleton::setEvent(int eventIndex, std::chrono::nanoseconds duration,
   its.it_interval.tv_sec = 0;
   its.it_interval.tv_nsec = 0;
 
-  TimerSingleton::setEvent(eventIndex, loop);
+  TimerSingleton::setEvent(eventIndex, handler);
   if (timer_settime(timerid, 0, &its, NULL) == -1) {
     perror("timer_settime");
     exit(EXIT_FAILURE);
   }
 }
 
-void TimerSingleton::setEvent(int timer, std::weak_ptr<EventLoop> loop) {
+void TimerSingleton::setEvent(int timer, std::function<void(size_t)> handler) {
   std::lock_guard lg(mMutex);
-  get().mListeners[timer] = std::move(loop);
+  get().mListeners[timer] = std::move(handler);
 }
 
 void TimerSingleton::fire(int timer) {
   std::unique_lock lock(mMutex);
-  auto loop = get().mListeners[timer].lock();
-  if (!loop) {
-    return;
-  }
+  auto handler = get().mListeners[timer];
   lock.unlock();
-  loop->handleTask(timer);
+  handler(timer);
 }
 
 void TimerSingleton::releaseEvent(int timer) {

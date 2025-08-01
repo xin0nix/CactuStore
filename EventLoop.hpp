@@ -10,17 +10,18 @@
 
 namespace cactus {
 struct Task {
-  std::function<void(void)> mCallback;
+  std::function<void(size_t)> mCallback;
   size_t mIndex;
+  size_t mPayload;
 };
 
 struct TcpSocket;
 
 struct EventLoop : std::enable_shared_from_this<EventLoop> {
-  void handleTask(size_t index);
+  void handleTask(size_t index, size_t payload = 0UL);
 
   void onTimeout(std::chrono::nanoseconds duration,
-                 std::function<void(void)> callback);
+                 std::function<void(size_t)> callback);
 
   void onTcpSocketRead(std::shared_ptr<TcpSocket> socket,
                        std::span<uint8_t> buffer,

@@ -3,6 +3,7 @@
 #include "Timer.hpp"
 
 #include <csignal>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
@@ -10,62 +11,80 @@
 
 namespace cactus {
 
-void EventLoop::handleTask(size_t index) {
+void EventLoop::handleTask(size_t index, size_t payload) {
   auto weak = weak_from_this();
   auto self = weak.lock();
   if (!self) {
     return;
   }
-  std::lock_guard guard(self->mMutex);
+  std::unique_lock lock(self->mMutex);
   auto task = self->mPendingTasks.at(index);
+  task.mPayload = payload;
   self->mReadyTasks.push(std::move(task));
   mCondVar.notify_one();
 }
 
 void EventLoop::onTimeout(std::chrono::nanoseconds duration,
-                          std::function<void(void)> callback) {
-  auto weak = weak_from_this();
-  auto self = weak.lock();
-  if (!self) {
-    return;
-  }
-  std::lock_guard guard(self->mMutex);
-  self->mPendingTasks[mTaskCount] = Task{
+                          std::function<void(size_t)> callback) {
+  std::unique_lock lock(mMutex);
+  mPendingTasks[mTaskCount] = Task{
       .mCallback = std::move(callback),
       .mIndex = mTaskCount,
+      .mPayload = 0UL,
   };
+  lock.unlock();
 
-  TimerSingleton::setEvent(mTaskCount, duration, weak_from_this());
+  TimerSingleton::setEvent(mTaskCount, duration,
+                           [weak = weak_from_this()](size_t index) {
+                             auto self = weak.lock();
+                             if (!self) {
+                               return;
+                             }
+                             self->handleTask(index);
+                           });
   mTaskCount += 1;
 }
 
 void EventLoop::onTcpSocketRead(std::shared_ptr<TcpSocket> socket,
                                 std::span<uint8_t> buffer,
                                 std::function<void(size_t)> callback) {
+  std::unique_lock lock(mMutex);
+  mPendingTasks[mTaskCount] = Task{
+      .mCallback = std::move(callback),
+      .mIndex = mTaskCount,
+      .mPayload = 0UL,
+  };
+  lock.unlock();
+
   // TODO: go through the event loop!
-  socket->read(buffer, std::move(callback));
+  socket->read(buffer, [weak = weak_from_this(),
+                        index = mTaskCount.load()](size_t bytesRead) {
+    auto self = weak.lock();
+    if (!self) {
+      return;
+    }
+    self->handleTask(index, bytesRead);
+  });
+  mTaskCount += 1;
 }
 
 void EventLoop::run() {
-  auto weak = weak_from_this();
-  auto self = weak.lock();
-  if (!self) {
-    return;
-  }
   bool done = false;
   while (!done) {
     const auto currentTime = std::chrono::system_clock::now();
-    std::unique_lock lock(self->mMutex);
-    mCondVar.wait(lock, [self]() { return !self->mReadyTasks.empty(); });
-    const auto &top = self->mReadyTasks.front();
+    std::unique_lock lock(mMutex);
+    mCondVar.wait(lock, [this]() { return !mReadyTasks.empty(); });
+    const auto &top = mReadyTasks.front();
     auto callback = std::move(top.mCallback);
     auto index = top.mIndex;
-    self->mPendingTasks.erase(index);
-    self->mReadyTasks.pop();
-    done = self->mPendingTasks.empty() && self->mReadyTasks.empty();
+    auto payload = top.mPayload;
+    mPendingTasks.erase(index);
+    mReadyTasks.pop();
+    done = mPendingTasks.empty() && mReadyTasks.empty();
     lock.unlock();
     TimerSingleton::releaseEvent(index);
-    callback();
+    // FIXME: use variant, probably
+    callback(payload);
   }
 }
 

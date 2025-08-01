@@ -26,7 +26,7 @@ bool AvaitableTimer::await_ready() const noexcept {
 
 void AvaitableTimer::await_suspend(
     std::coroutine_handle<CoroPromise> handle) noexcept {
-  mEventLoop->onTimeout(mDuration, [handle]() { handle.resume(); });
+  mEventLoop->onTimeout(mDuration, [handle](size_t) { handle.resume(); });
 }
 
 void AvaitableTimer::await_resume() const noexcept {}
